@@ -11,6 +11,17 @@ DEFAULT_DB_PATH = os.environ.get(
     str(Path.home() / ".amazon_review_pipeline" / "pipeline.db"),
 )
 
+CURRENCY_MAP = {
+    "us": "USD", "uk": "GBP", "de": "EUR", "jp": "JPY", "fr": "EUR",
+    "it": "EUR", "es": "EUR", "ca": "CAD", "in": "INR", "au": "AUD",
+    "mx": "MXN", "br": "BRL", "nl": "EUR",
+}
+
+CURRENCY_SYMBOLS = {
+    "USD": "$", "GBP": "£", "EUR": "€", "JPY": "¥", "CAD": "C$",
+    "INR": "₹", "AUD": "A$", "MXN": "MX$", "BRL": "R$",
+}
+
 
 def connect(db_path: str = DEFAULT_DB_PATH):
     path = Path(db_path).expanduser()
@@ -115,10 +126,19 @@ def init_db(conn):
             opportunity_score REAL,
             report_obsidian_path TEXT,
             docx_path TEXT,
+            currency TEXT DEFAULT 'USD',
             captured_at TEXT NOT NULL
         )
         """
     )
+    # 迁移：给旧表加 currency 列
+    try:
+        conn.execute("ALTER TABLE category_summary ADD COLUMN currency TEXT DEFAULT 'USD'")
+    except Exception:
+        pass
+    # 回填已有数据的币种
+    for code, curr in CURRENCY_MAP.items():
+        conn.execute("UPDATE category_summary SET currency = ? WHERE region = ? AND currency IS NULL", (curr, code))
     conn.commit()
 
 
@@ -295,30 +315,27 @@ def save_category_summary(conn, all_data: dict, keyword: str, region: str, docx_
             opportunity_score += min(30, int((price_range / avg_price) * 30))
     opportunity_score = min(100, opportunity_score)
 
+    currency = CURRENCY_MAP.get(region, "USD")
     conn.execute(
         """
         INSERT INTO category_summary (
             run_id, keyword, region, category, avg_price, min_price, max_price,
             avg_rating, total_reviews, product_count, top_3_pain_points,
-            top_3_pros, opportunity_score, report_obsidian_path, docx_path, captured_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            top_3_pros, opportunity_score, report_obsidian_path, docx_path,
+            currency, captured_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_id,
-            keyword,
-            region,
-            keyword,
-            avg_price,
-            min_price,
-            max_price,
-            avg_rating,
-            total_reviews,
-            product_count,
+            keyword, region, keyword,
+            avg_price, min_price, max_price,
+            avg_rating, total_reviews, product_count,
             json.dumps(top_pains, ensure_ascii=False),
             json.dumps(top_pros, ensure_ascii=False),
             opportunity_score,
-            "",  # report_obsidian_path, 由 obsidian_export 更新
+            "",  # report_obsidian_path
             docx_path,
+            currency,
             captured_at or time.strftime("%Y-%m-%d %H:%M:%S"),
         ),
     )

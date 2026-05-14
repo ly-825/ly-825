@@ -17,7 +17,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from storage import DEFAULT_DB_PATH, connect
+from storage import DEFAULT_DB_PATH, connect, CURRENCY_MAP, CURRENCY_SYMBOLS
 
 
 def query_trend(conn, keyword: str, days: int = 30) -> str:
@@ -82,6 +82,7 @@ def query_compare(conn, keyword: str, regions: list = None) -> str:
             continue
         regions_data[r["region"]] = {
             "avg_price": r["avg_price"], "min_price": r["min_price"], "max_price": r["max_price"],
+            "currency": r["currency"] or CURRENCY_MAP.get(r["region"], "USD"),
             "avg_rating": r["avg_rating"], "product_count": r["product_count"],
             "total_reviews": r["total_reviews"], "opportunity_score": r["opportunity_score"],
             "top_pains": json.loads(r["top_3_pain_points"] or "[]"),
@@ -94,7 +95,7 @@ def query_compare(conn, keyword: str, regions: list = None) -> str:
 def query_ranking(conn, days: int = 30) -> str:
     since = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
     rows = conn.execute(
-        """SELECT keyword, region, avg_price, avg_rating, product_count,
+        """SELECT keyword, region, avg_price, avg_rating, currency, product_count,
                   opportunity_score, top_3_pain_points, captured_at
            FROM category_summary
            WHERE captured_at >= ?
@@ -106,6 +107,7 @@ def query_ranking(conn, days: int = 30) -> str:
         ranking.append({
             "keyword": r["keyword"], "region": r["region"],
             "avg_price": r["avg_price"], "avg_rating": r["avg_rating"],
+            "currency": r["currency"] or "USD",
             "product_count": r["product_count"],
             "opportunity_score": r["opportunity_score"],
             "top_pains": json.loads(r["top_3_pain_points"] or "[]")[:2],

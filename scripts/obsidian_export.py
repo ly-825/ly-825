@@ -320,7 +320,7 @@ def render_dashboard(vault: Path, current_data: dict, captured_at: str) -> str:
         db_stats["reviews"] = conn.execute("SELECT COUNT(*) FROM review_snapshot").fetchone()[0]
 
         # 机会排名
-        rows = conn.execute("""SELECT keyword, region, avg_price, avg_rating,
+        rows = conn.execute("""SELECT keyword, region, avg_price, avg_rating, currency,
             opportunity_score, captured_at FROM category_summary
             ORDER BY opportunity_score DESC LIMIT 8""").fetchall()
         db_stats["ranking"] = [dict(r) for r in rows]
@@ -362,7 +362,9 @@ def render_dashboard(vault: Path, current_data: dict, captured_at: str) -> str:
         "|------|------|------|------|--------|------|",
     ]
     for r in db_stats["ranking"]:
-        lines.append(f"| {r['keyword']} | {r['region']} | ${r['avg_price']:.0f} | {r['avg_rating']:.1f}★ | {r['opportunity_score']:.0f} | {r['captured_at'][:10]} |")
+        curr = r['currency'] or 'USD'
+        sym = {'USD':'$','GBP':'£','EUR':'€','JPY':'¥','CAD':'C$','INR':'₹','AUD':'A$','MXN':'MX$','BRL':'R$'}.get(curr, '$')
+        lines.append(f"| {r['keyword']} | {r['region']} | {sym}{r['avg_price']:.0f} | {r['avg_rating']:.1f}★ | {r['opportunity_score']:.0f} | {r['captured_at'][:10]} |")
 
     lines.extend(["", "## 🔍 全品类痛点 TOP 15", ""])
     for kw, cnt in db_stats["pains"]:
