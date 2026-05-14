@@ -171,6 +171,147 @@ def query_pains(conn, keyword: str = None, days: int = 90) -> str:
     }, ensure_ascii=False)
 
 
+def query_cross_category(conn, keyword: str = None, days: int = 30) -> str:
+    """跨品类对比分析"""
+    since = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+    if keyword:
+        rows = conn.execute(
+            """SELECT keyword, region, currency, avg_price, avg_rating,
+                      opportunity_score, top_3_pain_points, captured_at
+               FROM category_summary
+               WHERE keyword LIKE ? AND captured_at >= ?
+               ORDER BY captured_at DESC""",
+            (f"%{keyword}%", since),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT keyword, region, currency,
+                      ROUND(AVG(avg_price),0) as avg_price,
+                      ROUND(AVG(avg_rating),1) as avg_rating,
+                      MAX(opportunity_score) as opportunity_score,
+                      COUNT(*) as runs, MAX(captured_at) as last_run
+               FROM category_summary
+               WHERE captured_at >= ?
+               GROUP BY keyword, region
+               ORDER BY opportunity_score DESC""",
+            (since,),
+        ).fetchall()
+
+    results = []
+    for r in rows:
+        entry = {"keyword": r["keyword"], "region": r["region"],
+                 "currency": r["currency"] or "USD",
+                 "avg_price": r["avg_price"], "avg_rating": r["avg_rating"],
+                 "opportunity_score": r["opportunity_score"],
+                 "date": (r["captured_at"] if "captured_at" in r.keys() else (r["last_run"] if "last_run" in r.keys() else ""))[:10]}
+        if keyword:
+            entry["top_pains"] = json.loads(r.get("top_3_pain_points") or "[]")[:3]
+        results.append(entry)
+
+    # 跨品类痛点排行
+    pain_rows = conn.execute(
+        """SELECT pain, SUM(count) as total_count
+           FROM pain_observation
+           WHERE captured_at >= ?""" + (f" AND keyword LIKE ?" if keyword else ""),
+        (since, f"%{keyword}%") if keyword else (since,),
+    ).fetchall() if not keyword else []
+
+    cross_pains = [{"pain": r["pain"], "total_count": r["total_count"]}
+                   for r in sorted(pain_rows, key=lambda x: -x["total_count"])[:10]]
+
+    return json.dumps({
+        "type": "cross_category",
+        "keyword": keyword or "全品类",
+        "days": days,
+        "results": results,
+        "cross_pain_ranking": cross_pains if not keyword else [],
+    }, ensure_ascii=False)
+
+
+def query_pain_details(conn, keyword: str = None, days: int = 90) -> str:
+    """从 pain_observation 明细表查询痛点排行（替代从 JSON 解析）"""
+    since = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+    params = [since]
+    where = "WHERE captured_at >= ?"
+    if keyword:
+        where += " AND keyword LIKE ?"
+        params.append(f"%{keyword}%")
+
+    rows = conn.execute(
+        f"""SELECT pain, SUM(count) as total_count, COUNT(DISTINCT asin) as affected_products,
+                   GROUP_CONCAT(DISTINCT keyword) as categories
+            FROM pain_observation
+            {where}
+            GROUP BY pain
+            ORDER BY total_count DESC""",
+        params,
+    ).fetchall()
+
+    pains = [{"pain": r["pain"], "total_count": r["total_count"],
+              "affected_products": r["affected_products"],
+              "categories": (r["categories"] or "").split(",")} for r in rows]
+
+    return json.dumps({
+        "type": "pain_details",
+        "keyword": keyword or "全品类",
+        "days": days,
+        "pains": pains,
+    }, ensure_ascii=False)
+
+
+def query_pro_details(conn, keyword: str = None, days: int = 90) -> str:
+    """从 pro_observation 明细表查询优点排行"""
+    since = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+    params = [since]
+    where = "WHERE captured_at >= ?"
+    if keyword:
+        where += " AND keyword LIKE ?"
+        params.append(f"%{keyword}%")
+
+    rows = conn.execute(
+        f"""SELECT pro, COUNT(*) as mention_count, COUNT(DISTINCT asin) as affected_products
+            FROM pro_observation
+            {where}
+            GROUP BY pro
+            ORDER BY mention_count DESC""",
+        params,
+    ).fetchall()
+
+    pros = [{"pro": r["pro"], "mention_count": r["mention_count"],
+             "affected_products": r["affected_products"]} for r in rows]
+
+    return json.dumps({
+        "type": "pro_details",
+        "keyword": keyword or "全品类",
+        "days": days,
+        "pros": pros,
+    }, ensure_ascii=False)
+
+
+def query_search(conn, term: str) -> str:
+    """FTS5 全文检索评论"""
+    rows = conn.execute(
+        """SELECT asin, run_id, snippet(review_fts, 2, '<mark>', '</mark>', '...', 40) as snippet,
+                  bm25(review_fts) as score
+           FROM review_fts
+           WHERE review_fts MATCH ?
+           ORDER BY score
+           LIMIT 20""",
+        (term,),
+    ).fetchall()
+
+    results = [{"asin": r["asin"], "run_id": r["run_id"],
+                "snippet": r["snippet"], "score": round(r["score"], 1)}
+               for r in rows]
+
+    return json.dumps({
+        "type": "search",
+        "term": term,
+        "hits": len(results),
+        "results": results,
+    }, ensure_ascii=False)
+
+
 def query_categories(conn) -> str:
     rows = conn.execute(
         """SELECT keyword, COUNT(*) as runs, MAX(captured_at) as last,
@@ -191,6 +332,10 @@ def main():
     parser.add_argument("--summary", "-s", help="品类摘要（关键词）")
     parser.add_argument("--pains", "-p", nargs="?", const="__ALL__", help="痛点分析（可选关键词）")
     parser.add_argument("--categories", action="store_true", help="列出所有品类")
+    parser.add_argument("--cross", nargs="?", const="__ALL__", help="跨品类对比分析（可选关键词）")
+    parser.add_argument("--pain-details", nargs="?", const="__ALL__", help="从明细表查痛点排行")
+    parser.add_argument("--pro-details", nargs="?", const="__ALL__", help="从明细表查优点排行")
+    parser.add_argument("--search", help="FTS5 全文检索评论")
     parser.add_argument("--regions", default="", help="指定地区，逗号分隔")
     parser.add_argument("--days", "-d", type=int, default=30, help="天数范围")
     parser.add_argument("--db", default=DEFAULT_DB_PATH)
@@ -210,6 +355,17 @@ def main():
         elif args.pains is not None:
             kw = None if args.pains == "__ALL__" else args.pains
             print(query_pains(conn, kw, args.days))
+        elif args.pain_details is not None:
+            kw = None if args.pain_details == "__ALL__" else args.pain_details
+            print(query_pain_details(conn, kw, args.days))
+        elif args.pro_details is not None:
+            kw = None if args.pro_details == "__ALL__" else args.pro_details
+            print(query_pro_details(conn, kw, args.days))
+        elif args.search:
+            print(query_search(conn, args.search))
+        elif args.cross is not None:
+            kw = None if args.cross == "__ALL__" else args.cross
+            print(query_cross_category(conn, kw, args.days))
         elif args.categories:
             print(query_categories(conn))
         else:

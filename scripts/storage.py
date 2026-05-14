@@ -277,6 +277,26 @@ def init_db(conn):
         except Exception:
             pass
 
+    # 汇总视图
+    try:
+        conn.execute(
+            """
+            CREATE VIEW IF NOT EXISTS category_dashboard AS
+            SELECT keyword, region, currency,
+                   ROUND(AVG(avg_price),0) as avg_price_all,
+                   ROUND(AVG(avg_rating),1) as avg_rating_all,
+                   SUM(product_count) as total_products,
+                   SUM(total_reviews) as total_reviews,
+                   MAX(opportunity_score) as best_opportunity_score,
+                   COUNT(*) as run_count,
+                   MAX(captured_at) as last_run
+            FROM category_summary
+            GROUP BY keyword, region
+            """
+        )
+    except Exception:
+        pass
+
     # 回填已有数据的币种
     for code, curr in CURRENCY_MAP.items():
         conn.execute("UPDATE category_summary SET currency = ? WHERE region = ? AND currency IS NULL", (curr, code))

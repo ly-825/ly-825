@@ -29,9 +29,20 @@ python3 $SCRIPT --ranking --days 30
 # 单品类摘要
 python3 $SCRIPT --summary "关键词"
 
-# 痛点统计（全品类或指定）
-python3 $SCRIPT --pains
-python3 $SCRIPT --pains "关键词"
+# 痛点统计 — 明细表版（从 pain_observation 直接查，全品类或指定）
+python3 $SCRIPT --pain-details
+python3 $SCRIPT --pain-details "关键词"
+
+# 优点统计 — 明细表版
+python3 $SCRIPT --pro-details
+python3 $SCRIPT --pro-details "关键词"
+
+# 跨品类对比分析
+python3 $SCRIPT --cross
+python3 $SCRIPT --cross "关键词"
+
+# FTS5 全文检索评论
+python3 $SCRIPT --search "关键词"
 
 # 列出所有已调研品类
 python3 $SCRIPT --categories
