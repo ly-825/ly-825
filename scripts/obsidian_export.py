@@ -449,9 +449,18 @@ def export_pain_library(vault: Path, all_data: dict, keyword: str, region: str, 
                 "count": int(pain.get("count", 0) or 0),
                 "report_name": report_name,
             })
-    for pain, entries in grouped.items():
+    for pain, new_entries in grouped.items():
         path = pain_dir / f"{safe_name(pain)}.md"
-        write_file(path, render_pain_note(pain, entries, captured_at))
+        # 追加模式：合并历史记录，同一 ASIN+report 去重
+        all_entries = list(new_entries)
+        if path.exists():
+            existing = extract_frontmatter(str(path))
+            old_entries = existing.get("entries", []) or []
+            seen = {(e.get("asin",""), e.get("report_name","")) for e in new_entries}
+            for e in old_entries:
+                if (e.get("asin",""), e.get("report_name","")) not in seen:
+                    all_entries.append(e)
+        write_file(path, render_pain_note(pain, all_entries, captured_at))
 
 
 def export_obsidian(all_data: dict, keyword: str, region: str, sort: str, domain: str, docx_path: str = "", vault_path: str = DEFAULT_VAULT, run_id: str = "", db_path: str = ""):
