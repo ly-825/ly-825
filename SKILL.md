@@ -21,12 +21,18 @@ description: 全自动 Amazon 选品 pipeline。当用户明确要求去 Amazon 
 
 **触发后，先提取品类和关键词，然后必须问以下两个问题，等用户回复后再执行 pipeline。**
 
-### 必问问题（两条必须都问，合并在一条消息里）
+### 必问问题（三条必须都问，合并在一条消息里）
 
 ```
-好的，我来帮你分析「{品类}」（搜索词：{英文关键词}）在 Amazon 美国站的情况。
+好的，我来帮你分析「{品类}」（搜索词：{英文关键词}）。
 
-先确认两个参数：
+先确认三个参数：
+0. 目标地区：
+   1. 美国 amazon.com       6. 意大利 amazon.it      11. 墨西哥 amazon.com.mx
+   2. 英国 amazon.co.uk     7. 西班牙 amazon.es      12. 巴西 amazon.com.br
+   3. 德国 amazon.de        8. 加拿大 amazon.ca      13. 荷兰 amazon.nl
+   4. 日本 amazon.co.jp     9. 印度 amazon.in
+   5. 法国 amazon.fr       10. 澳大利亚 amazon.com.au
 1. 排行榜类型：
    1️⃣ 销量榜（Best Sellers）—— 最畅销、存量市场
    2️⃣ 新品榜（New Releases）—— 近期新品机会
@@ -38,23 +44,25 @@ description: 全自动 Amazon 选品 pipeline。当用户明确要求去 Amazon 
 ### 执行时机
 
 - ❌ **禁止**：识别到意图后直接跑 pipeline
-- ✅ **正确**：识别意图 → 提取关键词 → 问两个问题 → 等用户回复 → 执行
+- ✅ **正确**：识别意图 → 提取关键词 → 问三个问题 → 等用户回复 → 执行
 
 ### 命令格式
 
-收到用户回复后，按以下格式拼接命令（三个参数都是**必填**）：
+收到用户回复后，按以下格式拼接命令（四个参数都是**必填**）：
 
 **重要：飞书报告发送到触发者本人。** 你必须从 conversation 上下文（inbound_meta）中找到当前用户的飞书 open_id（格式为 `ou_xxx`），加上 `--feishu-target "ou_xxx"` 参数。这样 Word 报告会直接发到触发者的飞书窗口，而不是固定发到你的 open_id。
 
 ```bash
 python3 ~/.openclaw/workspace/skills/amazon-review-pipeline/scripts/pipeline.py \
   --keyword "英文关键词" \
+  --region 地区代码 \
   --sort 排行榜英文 \
   --max-products 数量 \
   --feishu-target "触发者的飞书open_id" \
   --yes
 ```
 
+地区代码：us/uk/de/jp/fr/it/es/ca/in/au/mx/br/nl
 排行榜英文映射：销量榜=bestsellers，新品榜=newreleases，飙升榜=moversandshakers，评论榜=topreview
 
 ---
@@ -356,26 +364,23 @@ python3 ~/.openclaw/workspace/skills/amazon-review-pipeline/scripts/seller_conta
 ## 示例对话
 
 > **用户**：帮我分析一下鼠标垫
-> **Agent**：好的！先确认两个参数：
+> **Agent**：好的！先确认三个参数：
+> 0. 目标地区：（13个站点列表）
 > 1. 排行榜类型：
->    1. 销量榜（Best Sellers）
->    2. 新品榜（New Releases）
->    3. 飙升榜（Movers & Shakers）
->    4. 评论榜（Top Rated）
+>    1. 销量榜（Best Sellers）2. 新品榜（New Releases）
+>    3. 飙升榜（Movers & Shakers）4. 评论榜（Top Rated）
 > 2. 分析几个产品？（建议 3-10）
-> **用户**：2，3个
-> **Agent**：✅ 新品榜 × 3 个产品，开始跑...（约 10-20 分钟）
+> **用户**：1，2，3个
+> **Agent**：✅ 美国站 × 新品榜 × 3 个产品，开始跑...
 
-> **用户**：跑一下水杯
-> **Agent**：好的！先确认两个参数：
+> **用户**：跑一下水杯，德国站
+> **Agent**：好的！德国站，先确认两个参数：
 > 1. 排行榜类型：
->    1. 销量榜（Best Sellers）
->    2. 新品榜（New Releases）
->    3. 飙升榜（Movers & Shakers）
->    4. 评论榜（Top Rated）
+>    1. 销量榜（Best Sellers）2. 新品榜（New Releases）
+>    3. 飙升榜（Movers & Shakers）4. 评论榜（Top Rated）
 > 2. 分析几个产品？（建议 3-10）
 > **用户**：1，5
-> **Agent**：✅ 销量榜 × 5 个产品，开始跑...
+> **Agent**：✅ 德国站 × 销量榜 × 5 个产品，开始跑...
 
 ### Pipeline 跑完后：
 
