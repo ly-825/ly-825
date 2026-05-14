@@ -184,6 +184,55 @@ def init_db(conn):
         )
         """
     )
+    # ── 痛点/优点明细表（优先级5）──
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pain_observation (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            keyword TEXT,
+            region TEXT,
+            asin TEXT NOT NULL,
+            pain TEXT NOT NULL,
+            count INTEGER DEFAULT 1,
+            captured_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pro_observation (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            keyword TEXT,
+            region TEXT,
+            asin TEXT NOT NULL,
+            pro TEXT NOT NULL,
+            captured_at TEXT NOT NULL
+        )
+        """
+    )
+    # ── FTS5 全文检索（优先级6）──
+    conn.execute(
+        """
+        CREATE VIRTUAL TABLE IF NOT EXISTS review_fts USING fts5(
+            asin, run_id, title, body, title_zh, body_zh,
+            content='review_snapshot',
+            content_rowid='id'
+        )
+        """
+    )
+    # 重建触发器（每次 init 都尝试，幂等）
+    for trigger in [
+        "CREATE TRIGGER IF NOT EXISTS review_ai AFTER INSERT ON review_snapshot BEGIN INSERT INTO review_fts(rowid, asin, run_id, title, body, title_zh, body_zh) VALUES (new.id, new.asin, new.run_id, new.title, new.body, new.title_zh, new.body_zh); END",
+        "CREATE TRIGGER IF NOT EXISTS review_ad AFTER DELETE ON review_snapshot BEGIN INSERT INTO review_fts(review_fts, rowid, asin, run_id, title, body, title_zh, body_zh) VALUES('delete', old.id, old.asin, old.run_id, old.title, old.body, old.title_zh, old.body_zh); END",
+        "CREATE TRIGGER IF NOT EXISTS review_au AFTER UPDATE ON review_snapshot BEGIN INSERT INTO review_fts(review_fts, rowid, asin, run_id, title, body, title_zh, body_zh) VALUES('delete', old.id, old.asin, old.run_id, old.title, old.body, old.title_zh, old.body_zh); INSERT INTO review_fts(rowid, asin, run_id, title, body, title_zh, body_zh) VALUES (new.id, new.asin, new.run_id, new.title, new.body, new.title_zh, new.body_zh); END",
+    ]:
+        try:
+            conn.execute(trigger)
+        except Exception:
+            pass
+
     # ── 迁移：旧表加缺少的列 ──
     for col, col_type in [
         ("currency", "TEXT DEFAULT 'USD'"),
@@ -340,6 +389,22 @@ def save_pipeline_run(
                 docx_path, captured_at,
             ),
         )
+
+        # 痛点/优点明细表
+        for asin, info in all_data.items():
+            ai = info.get("_ai", {}) or {}
+            for pain in ai.get("pains", []) or []:
+                kw = pain.get("keyword", "")
+                cnt = int(pain.get("count", 0) or 0)
+                if kw:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO pain_observation(run_id,keyword,region,asin,pain,count,captured_at) VALUES(?,?,?,?,?,?,?)",
+                        (run_id, keyword, region, asin, kw, cnt, captured_at))
+            for pro in ai.get("pros", []) or []:
+                if pro.strip():
+                    conn.execute(
+                        "INSERT OR IGNORE INTO pro_observation(run_id,keyword,region,asin,pro,captured_at) VALUES(?,?,?,?,?,?)",
+                        (run_id, keyword, region, asin, pro.strip(), captured_at))
 
         # category_summary: 直接从内存 all_data 聚合
         save_category_summary(
