@@ -65,7 +65,7 @@ def query_compare(conn, keyword: str, regions: list = None) -> str:
     rows = conn.execute(
         """SELECT region, avg_price, min_price, max_price, avg_rating,
                   product_count, total_reviews, opportunity_score,
-                  top_3_pain_points, top_3_pros, captured_at
+                  top_3_pain_points, top_3_pros, captured_at, currency
            FROM category_summary
            WHERE keyword LIKE ?
            GROUP BY region

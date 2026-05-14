@@ -1979,6 +1979,7 @@ def interactive_prompt():
 
 
 if __name__ == "__main__":
+    args = None
     if len(sys.argv) == 1:
         keyword_raw, keyword, sort, sort_name, max_products, domain, source_lang = interactive_prompt()
         translate = True
@@ -1999,6 +2000,7 @@ if __name__ == "__main__":
         parser.add_argument("--obsidian-vault", default="", help="Obsidian vault 路径，默认 ~/Documents/Obsidian/Amazon选品")
         parser.add_argument("--feishu-target", default="", help="飞书目标用户 open_id")
         parser.add_argument("--feishu-account", default="", help="OpenClaw 飞书账号名，必须与 feishu-target 所属应用一致")
+        parser.add_argument("--resume", default="", help="断点续跑：指定已有 reviews_*.json 路径，跳过抓取直接生成报告")
         parser.add_argument("--yes", "-y", action="store_true", help="Skip confirm prompt")
         args = parser.parse_args()
 
@@ -2036,10 +2038,43 @@ if __name__ == "__main__":
 
     if len(sys.argv) == 1:
         region = next((r for r, d in AMAZON_DOMAINS.items() if d == domain), "us")
-        save_db = True  # 默认保存 SQLite
-        export_obsidian = True  # 默认导出 Obsidian
+        save_db = True
+        export_obsidian = True
         obsidian_vault = ""
         feishu_target = ""
         feishu_account = ""
+
+    resume_path = getattr(args, 'resume', '')
+    if resume_path:
+        # 断点续跑：加载已有 reviews JSON，跳过抓取，直接生成报告
+        async def resume_run():
+            print(f"🔄 断点续跑模式，加载: {resume_path}")
+            if not os.path.exists(resume_path):
+                print(f"❌ 文件不存在: {resume_path}")
+                sys.exit(1)
+            with open(resume_path) as f:
+                all_data = json.load(f)
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            output_dir = make_run_output_dir(ts)
+            cross_data = step_compute_analytics(all_data, keyword=keyword_raw or keyword)
+            docx_path = step_analyze_docx(all_data, keyword=keyword_raw or keyword, sort_name=sort_name, domain=domain, output_dir=str(output_dir))
+            if save_db:
+                from storage import save_pipeline_run
+                save_pipeline_run(all_data, keyword=keyword_raw or keyword, sort=sort, region=region, domain=domain, docx_path=docx_path, run_id=ts, cross_data=cross_data)
+                print(f"  ✅ 历史快照已保存")
+            if export_obsidian:
+                try:
+                    from obsidian_export import export_obsidian as export_obsidian_notes
+                    export_obsidian_notes(all_data=all_data, keyword=keyword_raw or keyword, region=region, sort=sort, domain=domain, docx_path=docx_path, vault_path=obsidian_vault or None, run_id=ts)
+                    print(f"  ✅ Obsidian 笔记已导出")
+                except Exception as e:
+                    print(f"  ⚠️ Obsidian 导出失败: {e}")
+            try:
+                await send_report_to_feishu(docx_path, keyword=keyword_raw or keyword, feishu_target=feishu_target, feishu_account=feishu_account)
+            except Exception:
+                pass
+            print(f"\n✅ 断点续跑完成！Word报告: {docx_path}")
+        asyncio.run(resume_run())
+        sys.exit(0)
 
     asyncio.run(run(keyword, sort, sort_name, max_products, translate, skip_confirm, keyword_raw=keyword_raw, domain=domain, source_lang=source_lang, region=region, save_db=save_db, export_obsidian=export_obsidian, obsidian_vault=obsidian_vault, feishu_target=feishu_target, feishu_account=feishu_account))

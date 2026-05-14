@@ -23,6 +23,59 @@ CURRENCY_SYMBOLS = {
 }
 
 
+def parse_price_value(price_text) -> float:
+    import re
+    if not price_text:
+        return None
+    m = re.search(r"[\d,.]+", str(price_text))
+    if m:
+        try:
+            return float(m.group().replace(",", ""))
+        except ValueError:
+            pass
+    return None
+
+
+def parse_rating_value(rating_text) -> float:
+    import re
+    if not rating_text:
+        return None
+    m = re.search(r"(\d+\.?\d*)", str(rating_text))
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    return None
+
+
+def parse_monthly_sales(sales_text) -> int:
+    import re
+    if not sales_text:
+        return None
+    text = str(sales_text).strip().upper().replace(",", "")
+    m = re.search(r"(\d+\.?\d*)\s*K?", text)
+    if m:
+        val = float(m.group(1))
+        if "K" in text:
+            val *= 1000
+        return int(val)
+    return None
+
+
+def parse_sales_rank(rank_text) -> int:
+    import re
+    if not rank_text:
+        return None
+    m = re.search(r"([\d,]+)", str(rank_text))
+    if m:
+        try:
+            return int(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+    return None
+
+
 def connect(db_path: str = DEFAULT_DB_PATH):
     path = Path(db_path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,11 +184,50 @@ def init_db(conn):
         )
         """
     )
-    # 迁移：给旧表加 currency 列
+    # ── 迁移：旧表加缺少的列 ──
+    for col, col_type in [
+        ("currency", "TEXT DEFAULT 'USD'"),
+        ("price_value", "REAL"),
+        ("rating_value", "REAL"),
+        ("monthly_sales_value", "INTEGER"),
+        ("sales_rank_value", "INTEGER"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE product_snapshot ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass
     try:
         conn.execute("ALTER TABLE category_summary ADD COLUMN currency TEXT DEFAULT 'USD'")
     except Exception:
         pass
+
+    # ── 索引 ──
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_product_keyword_region ON product_snapshot(keyword, region, captured_at)",
+        "CREATE INDEX IF NOT EXISTS idx_category_kwr_time ON category_summary(keyword, region, captured_at)",
+        "CREATE INDEX IF NOT EXISTS idx_category_time_score ON category_summary(captured_at, opportunity_score)",
+        "CREATE INDEX IF NOT EXISTS idx_knowledge_kwr_region ON knowledge_entry(keyword, region, entry_type)",
+    ]
+    for idx_sql in indexes:
+        try:
+            conn.execute(idx_sql)
+        except Exception:
+            pass
+
+    # ── 唯一约束（用 UNIQUE INDEX 避免 ALTER TABLE 兼容问题）──
+    uniques = [
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_product_run_asin ON product_snapshot(run_id, asin)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_category_run_kw_region ON category_summary(run_id, keyword, region)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_analysis_run_type ON analysis_report(run_id, report_type)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_knowledge_run_type_asin ON knowledge_entry(run_id, entry_type, asin)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_review_run_asin_body ON review_snapshot(run_id, asin, body)",
+    ]
+    for uq_sql in uniques:
+        try:
+            conn.execute(uq_sql)
+        except Exception:
+            pass
+
     # 回填已有数据的币种
     for code, curr in CURRENCY_MAP.items():
         conn.execute("UPDATE category_summary SET currency = ? WHERE region = ? AND currency IS NULL", (curr, code))
@@ -161,13 +253,19 @@ def save_pipeline_run(
     try:
         for asin, info in all_data.items():
             reviews = info.get("reviews", []) or []
+            # 解析数值字段
+            pv = parse_price_value(info.get("price", ""))
+            rv = parse_rating_value(info.get("rating", ""))
+            ms = parse_monthly_sales(info.get("monthly_sales", ""))
+            sr = parse_sales_rank(info.get("sales_rank", ""))
             conn.execute(
                 """
-                INSERT INTO product_snapshot (
+                INSERT OR IGNORE INTO product_snapshot (
                     run_id, asin, region, domain, keyword, sort, title, brand,
                     price, rating, review_count, monthly_sales, sales_rank,
-                    product_url, product_image, captured_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    product_url, product_image, captured_at,
+                    currency, price_value, rating_value, monthly_sales_value, sales_rank_value
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id, asin, region, domain, keyword, sort,
@@ -177,6 +275,7 @@ def save_pipeline_run(
                     info.get("sales_rank", ""),
                     f"https://{domain}/dp/{asin}",
                     info.get("product_image", ""), captured_at,
+                    CURRENCY_MAP.get(region, "USD"), pv, rv, ms, sr,
                 ),
             )
             for review in reviews:
